@@ -23,22 +23,39 @@ mcp = FastMCP(
 )
 
 
+async def poll_prediction(client: httpx.AsyncClient, prediction_id: str) -> dict:
+    """轮询直到生成完成"""
+    for _ in range(60):
+        await asyncio.sleep(2)
+        resp = await client.get(
+            f"https://api.replicate.com/v1/predictions/{prediction_id}",
+            headers={"Authorization": f"Bearer {REPLICATE_TOKEN}"}
+        )
+        data = resp.json()
+        if data.get("status") in ("succeeded", "failed", "canceled"):
+            return data
+    return {"status": "timeout"}
+
+
 @mcp.tool()
 async def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     """
-    Generate an image using Flux Schnell on Replicate.
+    Generate an image using Flux 1.1 Pro on Replicate (free tier).
     Args:
         prompt: Image description in any language
         aspect_ratio: One of 1:1, 4:3, 3:4, 16:9, 9:16
     Returns:
         URL of the generated image
     """
+    import asyncio
+
     if not REPLICATE_TOKEN:
         return "Error: REPLICATE_TOKEN not configured."
 
     async with httpx.AsyncClient(timeout=120) as client:
+        # flux-1.1-pro 用标准predictions端点
         resp = await client.post(
-            "https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions",
+            "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions",
             headers={
                 "Authorization": f"Bearer {REPLICATE_TOKEN}",
                 "Content-Type": "application/json",
@@ -50,19 +67,29 @@ async def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
                     "aspect_ratio": aspect_ratio,
                     "output_format": "webp",
                     "output_quality": 90,
+                    "safety_tolerance": 2,
                 }
             }
         )
 
-    data = resp.json()
+        data = resp.json()
 
-    if data.get("status") == "succeeded":
-        output = data.get("output")
-        url = output[0] if isinstance(output, list) else output
-        return f"✓ 生成成功：{url}"
+        # Prefer: wait 成功直接返回
+        if data.get("status") == "succeeded":
+            output = data.get("output")
+            url = output[0] if isinstance(output, list) else output
+            return f"✓ 生成成功：{url}"
 
-    error = data.get("error") or data.get("detail") or "Unknown error"
-    return f"✗ 生成失败：{error}"
+        # 如果返回了id但还在处理，轮询
+        if data.get("id") and data.get("status") not in ("failed", "canceled"):
+            data = await poll_prediction(client, data["id"])
+            if data.get("status") == "succeeded":
+                output = data.get("output")
+                url = output[0] if isinstance(output, list) else output
+                return f"✓ 生成成功：{url}"
+
+        error = data.get("error") or data.get("detail") or f"状态: {data.get('status')}"
+        return f"✗ 生成失败：{error}"
 
 
 @mcp.tool()
