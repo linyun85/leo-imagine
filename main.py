@@ -1,8 +1,3 @@
-"""
-leo-imagine: MCP server for image generation via Replicate API
-架构：FastMCP + streamable_http（参考 leotoy 实现）
-"""
-
 import os
 import httpx
 from contextlib import asynccontextmanager
@@ -32,11 +27,9 @@ mcp = FastMCP(
 async def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
     """
     Generate an image using Flux Schnell on Replicate.
-
     Args:
         prompt: Image description in any language
         aspect_ratio: One of 1:1, 4:3, 3:4, 16:9, 9:16
-
     Returns:
         URL of the generated image
     """
